@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Revalúa — Tasación al instante</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22 font-size=%2280%22><text y=%22.9em%22>%F0%9F%92%B0</text></svg>" />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #E1E6F1; }
+  * { box-sizing: border-box; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  function showDiag(msg) {
+    var root = document.getElementById('root');
+    if (root) {
+      root.innerHTML = '<div style="padding:24px;font-family:sans-serif;color:#B3432B;background:#FBEAE6;min-height:100vh;box-sizing:border-box;"><h2 style="margin-top:0;">No se pudo cargar la app</h2><pre style="white-space:pre-wrap;font-size:13px;line-height:1.5;">' + String(msg).replace(/</g, '&lt;') + '</pre></div>';
+    }
+  }
+  window.addEventListener('error', function (e) {
+    var parts = [];
+    parts.push('Mensaje: ' + (e.message || 'sin mensaje'));
+    if (e.filename) parts.push('Archivo: ' + e.filename + ':' + e.lineno + ':' + e.colno);
+    if (e.error && e.error.stack) parts.push('Stack:\n' + e.error.stack);
+    showDiag(parts.join('\n\n'));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    showDiag('Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+  setTimeout(function () {
+    var root = document.getElementById('root');
+    if (root && !root.hasChildNodes()) {
+      showDiag('La app no cargó después de varios segundos.\n\nPuede ser que React o ReactDOM no se pudieron descargar (revisa tu conexión a internet), o que el navegador bloqueó alguno de esos archivos.');
+    }
+  }, 4000);
+</script>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+
+<script>
+"use strict";
+const { useState, useRef, useEffect } = React;
+// ---- Almacenamiento local (reemplaza el window.storage exclusivo de Claude) ----
+window.storage = {
+    get(key) {
+        return new Promise((resolve, reject) => {
+            const v = localStorage.getItem('revalua:' + key);
+            if (v === null) {
+                reject(new Error('not found'));
+                return;
+            }
+            resolve({ key, value: v, shared: false });
+        });
+    },
+    set(key, value) {
+        return new Promise((resolve) => {
+            localStorage.setItem('revalua:' + key, value);
+            resolve({ key, value, shared: false });
+        });
+    },
+    delete(key) {
+        return new Promise((resolve) => {
+            localStorage.removeItem('revalua:' + key);
+            resolve({ key, deleted: true, shared: false });
+        });
+    },
+    list(prefix) {
+        return new Promise((resolve) => {
+            const keys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k && k.indexOf('revalua:') === 0) {
+                    const stripped = k.slice('revalua:'.length);
+                    if (!prefix || stripped.indexOf(prefix) === 0)
+                        keys.push(stripped);
+                }
+            }
+            resolve({ keys, prefix, shared: false });
+        });
+    },
+};
+// ---- Set de íconos propio (sin dependencias externas) ----
+function iconEl(size, color, strokeWidth, style, children) {
+    return React.createElement('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
+        stroke: color, strokeWidth, strokeLinecap: 'round', strokeLinejoin: 'round', style,
+    }, children);
+}
+function Camera({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" }),
+        React.createElement("circle", { cx: "12", cy: "13", r: "4" })));
+}
+function Copy({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2" }),
+        React.createElement("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })));
+}
+function ExternalLink({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" }),
+        React.createElement("polyline", { points: "15 3 21 3 21 9" }),
+        React.createElement("line", { x1: "10", y1: "14", x2: "21", y2: "3" })));
+}
+function Clock({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("circle", { cx: "12", cy: "12", r: "10" }),
+        React.createElement("polyline", { points: "12 6 12 12 16 14" })));
+}
+function ChevronLeft({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("polyline", { points: "15 18 9 12 15 6" })));
+}
+function ChevronRight({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("polyline", { points: "9 18 15 12 9 6" })));
+}
+function Check({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("polyline", { points: "20 6 9 17 4 12" })));
+}
+function Trash2({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("polyline", { points: "3 6 5 6 21 6" }),
+        React.createElement("path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }),
+        React.createElement("line", { x1: "10", y1: "11", x2: "10", y2: "17" }),
+        React.createElement("line", { x1: "14", y1: "11", x2: "14", y2: "17" })));
+}
+function ImageIcon({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("rect", { x: "3", y: "3", width: "18", height: "18", rx: "2" }),
+        React.createElement("circle", { cx: "8.5", cy: "8.5", r: "1.5" }),
+        React.createElement("polyline", { points: "21 15 16 10 5 21" })));
+}
+function AlertCircle({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("circle", { cx: "12", cy: "12", r: "10" }),
+        React.createElement("line", { x1: "12", y1: "8", x2: "12", y2: "12" }),
+        React.createElement("line", { x1: "12", y1: "16", x2: "12.01", y2: "16" })));
+}
+function Download({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }),
+        React.createElement("polyline", { points: "7 10 12 15 17 10" }),
+        React.createElement("line", { x1: "12", y1: "15", x2: "12", y2: "3" })));
+}
+function BarChart3({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("line", { x1: "12", y1: "20", x2: "12", y2: "10" }),
+        React.createElement("line", { x1: "18", y1: "20", x2: "18", y2: "4" }),
+        React.createElement("line", { x1: "6", y1: "20", x2: "6", y2: "16" })));
+}
+function MessageSquare({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" })));
+}
+function MessageCircle({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" })));
+}
+function Crown({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M4 17L2.5 7l5 4L12 4l4.5 7 5-4L20 17z" }),
+        React.createElement("line", { x1: "4", y1: "20", x2: "20", y2: "20" })));
+}
+function TrendingDown({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("polyline", { points: "23 18 13.5 8.5 8.5 13.5 1 6" }),
+        React.createElement("polyline", { points: "17 18 23 18 23 12" })));
+}
+function Lock({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2" }),
+        React.createElement("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })));
+}
+function Layers({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("polygon", { points: "12 2 2 7 12 12 22 7 12 2" }),
+        React.createElement("polyline", { points: "2 17 12 22 22 17" }),
+        React.createElement("polyline", { points: "2 12 12 17 22 12" })));
+}
+function Sparkles({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M12 3l1.8 4.9L19 9.5l-5.2 1.8L12 16l-1.8-4.7L5 9.5l5.2-1.6z" }),
+        React.createElement("path", { d: "M5 3v3M19 17v3M3 19h3M17 5h3" })));
+}
+function Search({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("circle", { cx: "11", cy: "11", r: "7" }),
+        React.createElement("line", { x1: "21", y1: "21", x2: "16.65", y2: "16.65" })));
+}
+function DollarSign({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("line", { x1: "12", y1: "1", x2: "12", y2: "23" }),
+        React.createElement("path", { d: "M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" })));
+}
+function Sofa({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M4 13v-2a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2" }),
+        React.createElement("path", { d: "M2 13h20v4a1 1 0 0 1-1 1h-1v3h-2v-3H6v3H4v-3H3a1 1 0 0 1-1-1z" })));
+}
+function Bike({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("circle", { cx: "6", cy: "17", r: "3.2" }),
+        React.createElement("circle", { cx: "18", cy: "17", r: "3.2" }),
+        React.createElement("path", { d: "M6 17l4.2-8h4.3L18 17M10.2 9l1.8-3h3.3" })));
+}
+function Laptop({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("rect", { x: "3", y: "4", width: "18", height: "12", rx: "1" }),
+        React.createElement("line", { x1: "2", y1: "20", x2: "22", y2: "20" })));
+}
+function Share2({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("circle", { cx: "18", cy: "5", r: "3" }),
+        React.createElement("circle", { cx: "6", cy: "12", r: "3" }),
+        React.createElement("circle", { cx: "18", cy: "19", r: "3" }),
+        React.createElement("line", { x1: "8.6", y1: "10.5", x2: "15.4", y2: "6.5" }),
+        React.createElement("line", { x1: "8.6", y1: "13.5", x2: "15.4", y2: "17.5" })));
+}
+function Lamp({ size = 24, color = 'currentColor', style, strokeWidth = 2 }) {
+    return (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round", strokeLinejoin: "round", style: style },
+        React.createElement("path", { d: "M9 2h6l3 7H6z" }),
+        React.createElement("line", { x1: "12", y1: "9", x2: "12", y2: "19" }),
+        React.createElement("line", { x1: "8", y1: "21", x2: "16", y2: "21" })));
+}
+const COLORS = {
+    bgFrom: '#EAF3EC',
+    bgTo: '#E1E6F1',
+    ink: '#10182B',
+    inkSoft: '#4B5468',
+    muted: '#6B7280',
+    green: '#1C7C54',
+    greenSoft: '#E3F2E9',
+    card: '#FFFFFF',
+    border: '#DFE4EA',
+    danger: '#B3432B',
+    dangerSoft: '#FBEAE6',
+};
+const FONT = "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+const FREE_SCAN_LIMIT = 3;
+const LOADING_MESSAGES = [
+    'Identificando el artículo…',
+    'Evaluando el estado…',
+    'Buscando precios reales del mercado…',
+    'Redactando el anuncio…',
+];
+const MONTH_LABELS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+function resizeImage(file, maxDim = 1024, quality = 0.82) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onerror = () => reject(new Error('Imagen no válida'));
+            img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+                if (width > height && width > maxDim) {
+                    height = Math.round((height * maxDim) / width);
+                    width = maxDim;
+                }
+                else if (height >= width && height > maxDim) {
+                    width = Math.round((width * maxDim) / height);
+                    height = maxDim;
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL('image/jpeg', quality));
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+const SERVER_URL = 'https://rev-production-bf0d.up.railway.app';
+async function analyzeItem(dataUrl) {
+    const base64 = dataUrl.split(',')[1];
+    const response = await fetch(`${SERVER_URL}/api/analyze-item`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64 }),
+    });
+    const data = await response.json();
+    if (!response.ok)
+        throw new Error(data.error || 'No se pudo conectar con el servidor.');
+    return data;
+}
+async function analyzeForPurchase(dataUrl) {
+    const base64 = dataUrl.split(',')[1];
+    const response = await fetch(`${SERVER_URL}/api/analyze-purchase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64 }),
+    });
+    const data = await response.json();
+    if (!response.ok)
+        throw new Error(data.error || 'No se pudo conectar con el servidor.');
+    return data;
+}
+async function suggestNegotiationReply(itemContext, buyerMessage) {
+    const response = await fetch(`${SERVER_URL}/api/negotiate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemContext, buyerMessage }),
+    });
+    const data = await response.json();
+    if (!response.ok)
+        throw new Error(data.error || 'No se pudo conectar con el servidor.');
+    return (data.reply || '').trim();
+}
+async function suggestPriceDrop(item) {
+    const response = await fetch(`${SERVER_URL}/api/price-drop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            title: item.title,
+            category: item.category,
+            condition: item.condition,
+            currency: item.currency,
+            price: item.price,
+        }),
+    });
+    const data = await response.json();
+    if (!response.ok)
+        throw new Error(data.error || 'No se pudo conectar con el servidor.');
+    return (data.suggestion || '').trim();
+}
+function monthKey(date = new Date()) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    return `usage:${y}-${m}`;
+}
+async function getScanCount() {
+    try {
+        const r = await window.storage.get(monthKey(), false);
+        return r && r.value ? parseInt(r.value, 10) || 0 : 0;
+    }
+    catch (e) {
+        return 0;
+    }
+}
+async function incrementScanCount() {
+    try {
+        const current = await getScanCount();
+        await window.storage.set(monthKey(), String(current + 1), false);
+    }
+    catch (e) {
+        // best-effort
+    }
+}
+async function getPremiumStatus() {
+    try {
+        const r = await window.storage.get('account:premium', false);
+        return !!r && r.value === 'true';
+    }
+    catch (e) {
+        return false;
+    }
+}
+async function setPremiumStatus(value) {
+    try {
+        await window.storage.set('account:premium', value ? 'true' : 'false', false);
+    }
+    catch (e) {
+        // best-effort
+    }
+}
+async function saveToHistory(listing) {
+    try {
+        const key = `listing:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+        await window.storage.set(key, JSON.stringify(listing), false);
+    }
+    catch (e) {
+        // best-effort
+    }
+}
+async function loadHistory() {
+    try {
+        const listResult = await window.storage.list('listing:', false);
+        const keys = (listResult && listResult.keys) || [];
+        const items = [];
+        for (const k of keys) {
+            try {
+                const r = await window.storage.get(k, false);
+                if (r && r.value)
+                    items.push(Object.assign({ storageKey: k }, JSON.parse(r.value)));
+            }
+            catch (e) {
+                // skip corrupt entry
+            }
+        }
+        items.sort((a, b) => (b.date || 0) - (a.date || 0));
+        return items;
+    }
+    catch (e) {
+        return [];
+    }
+}
+async function updateHistoryItem(key, patch) {
+    try {
+        const r = await window.storage.get(key, false);
+        if (!r || !r.value)
+            return;
+        const current = JSON.parse(r.value);
+        await window.storage.set(key, JSON.stringify(Object.assign(Object.assign({}, current), patch)), false);
+    }
+    catch (e) {
+        // best-effort
+    }
+}
+async function deleteHistoryItem(key) {
+    try {
+        await window.storage.delete(key, false);
+    }
+    catch (e) {
+        // best-effort
+    }
+}
+function TopBar({ title, onBack, right }) {
+    return (React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px 8px' } },
+        React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 32 } }, onBack && (React.createElement("button", { onClick: onBack, "aria-label": "Volver", style: iconButtonStyle },
+            React.createElement(ChevronLeft, { size: 20, color: COLORS.ink })))),
+        React.createElement("div", { style: { fontWeight: 700, fontSize: 15, color: COLORS.ink, letterSpacing: '-0.01em' } }, title),
+        React.createElement("div", { style: { minWidth: 32, display: 'flex', justifyContent: 'flex-end' } }, right)));
+}
+const iconButtonStyle = {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    border: 'none',
+    background: 'rgba(16,24,43,0.06)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+};
+function PrimaryButton({ children, onClick, disabled, style }) {
+    return (React.createElement("button", { onClick: onClick, disabled: disabled, style: Object.assign({ width: '100%', padding: '17px 20px', borderRadius: 999, border: 'none', background: disabled ? '#B7BEC9' : COLORS.ink, color: '#FFFFFF', fontFamily: FONT, fontWeight: 700, fontSize: 16, cursor: disabled ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }, style) }, children));
+}
+function Chip({ icon, label, onClick, accent }) {
+    return (React.createElement("button", { onClick: onClick, style: {
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+            width: '100%', padding: '12px 10px', borderRadius: 14,
+            border: `1px solid ${accent ? COLORS.green : COLORS.border}`,
+            background: accent ? COLORS.greenSoft : '#FFFFFF',
+            color: accent ? COLORS.green : COLORS.ink, fontFamily: FONT, fontWeight: 700, fontSize: 13,
+            cursor: 'pointer', textAlign: 'center', lineHeight: 1.25,
+        } },
+        icon,
+        " ",
+        label));
+}
+function StepDot({ icon, label }) {
+    return (React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: COLORS.inkSoft } },
+        icon,
+        " ",
+        label));
+}
+function LockedTeaser({ label, onClick }) {
+    return (React.createElement("button", { onClick: onClick, style: {
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%',
+            padding: '12px', borderRadius: 14, border: `1px dashed ${COLORS.border}`, background: 'rgba(255,255,255,0.5)',
+            fontFamily: FONT, fontWeight: 700, fontSize: 12.5, color: COLORS.inkSoft, cursor: 'pointer', marginBottom: 12,
+        } },
+        React.createElement(Lock, { size: 14 }),
+        " ",
+        label));
+}
+function HomeScreen({ onStart, onHistory, historyCount, onEarnings, onNegotiate, onUpgrade, onBatch, onBuy, isPremium, scanCount }) {
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '24px 24px 0' } },
+            React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+                React.createElement("div", { style: {
+                        width: 42, height: 42, borderRadius: 999, background: COLORS.ink,
+                        color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontWeight: 800, fontSize: 15,
+                    } }, "R$"),
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontWeight: 800, fontSize: 16, color: COLORS.ink, letterSpacing: '-0.01em' } }, "Reval\u00FAa"),
+                    React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, fontWeight: 600, letterSpacing: '0.02em' } }, "Tasaci\u00F3n al instante"))),
+            React.createElement("button", { onClick: onHistory, style: {
+                    display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 999,
+                    border: `1px solid ${COLORS.border}`, background: 'rgba(255,255,255,0.6)', cursor: 'pointer',
+                    fontFamily: FONT, fontSize: 13, fontWeight: 700, color: COLORS.ink,
+                } },
+                React.createElement(Clock, { size: 14 }),
+                " Historial",
+                historyCount > 0 ? ` (${historyCount})` : '')),
+        React.createElement("div", { style: { padding: '28px 24px 0' } },
+            React.createElement("h1", { style: {
+                    fontSize: 34, lineHeight: 1.12, fontWeight: 800, color: COLORS.ink,
+                    letterSpacing: '-0.02em', margin: 0,
+                } }, "Convierte lo que ya no usas en dinero"),
+            React.createElement("p", { style: { fontSize: 16, lineHeight: 1.55, color: COLORS.inkSoft, marginTop: 14, fontWeight: 500 } }, "Una foto. Un precio real. Un anuncio listo para pegar."),
+            React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 16 } },
+                React.createElement(StepDot, { icon: React.createElement(Camera, { size: 13 }), label: "Foto" }),
+                React.createElement(ChevronRight, { size: 13, color: COLORS.muted }),
+                React.createElement(StepDot, { icon: React.createElement(DollarSign, { size: 13 }), label: "Precio" }),
+                React.createElement(ChevronRight, { size: 13, color: COLORS.muted }),
+                React.createElement(StepDot, { icon: React.createElement(Share2, { size: 13 }), label: "Publica" }))),
+        React.createElement("div", { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '22px 24px 0' } },
+            React.createElement(Chip, { icon: React.createElement(BarChart3, { size: 15 }), label: "Reporte", onClick: onEarnings }),
+            React.createElement(Chip, { icon: React.createElement(MessageSquare, { size: 15 }), label: "Negociar", onClick: onNegotiate }),
+            React.createElement(Chip, { icon: React.createElement(Search, { size: 15 }), label: "Identificar y comprar", onClick: onBuy }),
+            React.createElement(Chip, { icon: React.createElement(Crown, { size: 15 }), label: "Premium", onClick: onUpgrade, accent: isPremium })),
+        React.createElement("div", { style: { padding: '20px 24px 0', flex: 1 } },
+            React.createElement(HeroCollage, null)),
+        React.createElement("div", { style: { padding: '24px 24px 8px' } },
+            React.createElement(PrimaryButton, { onClick: onStart },
+                React.createElement(Camera, { size: 18 }),
+                " Tasar un art\u00EDculo"),
+            React.createElement("div", { style: { textAlign: 'center', fontSize: 12, fontWeight: 600, marginTop: 10, color: isPremium ? COLORS.green : COLORS.muted } }, isPremium ? 'Tasaciones ilimitadas ✓' : `Te quedan ${Math.max(0, FREE_SCAN_LIMIT - scanCount)} tasaciones gratis este mes`)),
+        React.createElement("div", { style: { padding: '0 24px 24px', textAlign: 'center' } },
+            React.createElement("button", { onClick: onBatch, style: {
+                    background: 'none', border: 'none', color: COLORS.inkSoft, fontFamily: FONT,
+                    fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                } },
+                React.createElement(Layers, { size: 14 }),
+                " Tasar varios a la vez ",
+                !isPremium && '(Premium)'))));
+}
+function HeroCollage() {
+    const items = [
+        { Icon: Sofa, bg: 'linear-gradient(135deg, #2b3350 0%, #10182B 100%)', rotate: -6, style: { left: '6%', top: '6%', width: '40%', height: '34%' }, iconSize: 34 },
+        { Icon: Bike, bg: 'linear-gradient(135deg, #229a6c 0%, #155c40 100%)', rotate: 5, style: { left: '8%', bottom: '6%', width: '34%', height: '32%' }, iconSize: 30 },
+        { Icon: Lamp, bg: 'linear-gradient(135deg, #ffffff 0%, #eef1f5 100%)', rotate: -4, style: { right: '28%', bottom: '12%', width: '26%', height: '26%' }, iconSize: 26, dark: true },
+        { Icon: Laptop, bg: 'linear-gradient(135deg, #4a5a82 0%, #2c3652 100%)', rotate: 4, style: { right: '4%', top: '10%', width: '40%', height: '50%' }, iconSize: 38 },
+    ];
+    return (React.createElement("div", { style: {
+            position: 'relative', width: '100%', paddingTop: '70%', borderRadius: 28,
+            background: 'linear-gradient(160deg, #F4F8F4 0%, #E7ECF3 100%)',
+            overflow: 'hidden', border: `1px solid ${COLORS.border}`,
+        } }, items.map((it, i) => (React.createElement("div", { key: i, style: Object.assign(Object.assign({ position: 'absolute' }, it.style), { transform: `rotate(${it.rotate}deg)`, background: '#fff', padding: 6, borderRadius: 16, boxShadow: '0 14px 28px rgba(16,24,43,0.18)' }) },
+        React.createElement("div", { style: {
+                width: '100%', height: '100%', borderRadius: 10, background: it.bg,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+            } },
+            React.createElement(it.Icon, { size: it.iconSize, color: it.dark ? COLORS.ink : '#F4F8F4', strokeWidth: 1.6 })))))));
+}
+function CaptureScreen({ onBack, onPhoto, error }) {
+    const fileInputRef = useRef(null);
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "Foto del art\u00EDculo", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '12px 24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' } },
+            React.createElement("button", { onClick: () => fileInputRef.current && fileInputRef.current.click(), style: {
+                    width: '100%', aspectRatio: '3 / 4', borderRadius: 24,
+                    border: `2px dashed ${COLORS.border}`, background: 'rgba(255,255,255,0.5)',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: 12, cursor: 'pointer', fontFamily: FONT,
+                } },
+                React.createElement("div", { style: {
+                        width: 60, height: 60, borderRadius: 999, background: COLORS.ink,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    } },
+                    React.createElement(Camera, { size: 26, color: "#fff" })),
+                React.createElement("div", { style: { fontWeight: 700, color: COLORS.ink, fontSize: 15 } }, "Toca para tomar o subir una foto"),
+                React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, textAlign: 'center', maxWidth: 220 } }, "La tasaci\u00F3n empieza en cuanto elijas la foto \u2014 sin pasos extra.")),
+            React.createElement("input", { ref: fileInputRef, type: "file", accept: "image/*", capture: "environment", style: { display: 'none' }, onChange: (e) => {
+                    const file = e.target.files && e.target.files[0];
+                    if (file)
+                        onPhoto(file);
+                } }),
+            error && (React.createElement("div", { style: {
+                    marginTop: 16, display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px',
+                    borderRadius: 14, background: COLORS.dangerSoft, color: COLORS.danger, fontSize: 13.5,
+                } },
+                React.createElement(AlertCircle, { size: 16, style: { flexShrink: 0, marginTop: 1 } }),
+                React.createElement("span", null, error))))));
+}
+function BuyCaptureScreen({ onBack, onPhoto, error }) {
+    const fileInputRef = useRef(null);
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "Identificar y comprar", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '12px 24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' } },
+            React.createElement("button", { onClick: () => fileInputRef.current && fileInputRef.current.click(), style: {
+                    width: '100%', aspectRatio: '3 / 4', borderRadius: 24,
+                    border: `2px dashed ${COLORS.border}`, background: 'rgba(255,255,255,0.5)',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: 12, cursor: 'pointer', fontFamily: FONT,
+                } },
+                React.createElement("div", { style: {
+                        width: 60, height: 60, borderRadius: 999, background: COLORS.ink,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    } },
+                    React.createElement(Search, { size: 26, color: "#fff" })),
+                React.createElement("div", { style: { fontWeight: 700, color: COLORS.ink, fontSize: 15 } }, "Identificar producto"),
+                React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, textAlign: 'center', maxWidth: 240 } }, "Toma la foto de lo que no reconoces y buscamos d\u00F3nde comprarlo.")),
+            React.createElement("input", { ref: fileInputRef, type: "file", accept: "image/*", capture: "environment", style: { display: 'none' }, onChange: (e) => {
+                    const file = e.target.files && e.target.files[0];
+                    if (file)
+                        onPhoto(file);
+                } }),
+            error && (React.createElement("div", { style: {
+                    marginTop: 16, display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px',
+                    borderRadius: 14, background: COLORS.dangerSoft, color: COLORS.danger, fontSize: 13.5,
+                } },
+                React.createElement(AlertCircle, { size: 16, style: { flexShrink: 0, marginTop: 1 } }),
+                React.createElement("span", null, error))))));
+}
+function BatchCaptureScreen({ onBack, onPhotos, error }) {
+    const fileInputRef = useRef(null);
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "Varios art\u00EDculos", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '12px 24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' } },
+            React.createElement("button", { onClick: () => fileInputRef.current && fileInputRef.current.click(), style: {
+                    width: '100%', aspectRatio: '3 / 4', borderRadius: 24,
+                    border: `2px dashed ${COLORS.border}`, background: 'rgba(255,255,255,0.5)',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: 12, cursor: 'pointer', fontFamily: FONT,
+                } },
+                React.createElement("div", { style: {
+                        width: 60, height: 60, borderRadius: 999, background: COLORS.ink,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    } },
+                    React.createElement(Layers, { size: 26, color: "#fff" })),
+                React.createElement("div", { style: { fontWeight: 700, color: COLORS.ink, fontSize: 15 } }, "Elige hasta 10 fotos a la vez"),
+                React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, textAlign: 'center', maxWidth: 240 } }, "Cada foto se convierte en su propio anuncio, uno por uno.")),
+            React.createElement("input", { ref: fileInputRef, type: "file", accept: "image/*", multiple: true, style: { display: 'none' }, onChange: (e) => {
+                    if (e.target.files && e.target.files.length)
+                        onPhotos(e.target.files);
+                } }),
+            error && (React.createElement("div", { style: {
+                    marginTop: 16, display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px',
+                    borderRadius: 14, background: COLORS.dangerSoft, color: COLORS.danger, fontSize: 13.5,
+                } },
+                React.createElement(AlertCircle, { size: 16, style: { flexShrink: 0, marginTop: 1 } }),
+                React.createElement("span", null, error))))));
+}
+function AnalyzingScreen({ photoDataUrl, progress }) {
+    const [msgIndex, setMsgIndex] = useState(0);
+    useEffect(() => {
+        const id = setInterval(() => {
+            setMsgIndex((i) => (i + 1) % LOADING_MESSAGES.length);
+        }, 1800);
+        return () => clearInterval(id);
+    }, []);
+    return (React.createElement("div", { className: "screenFade", style: {
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            minHeight: '100%', padding: 24, textAlign: 'center',
+        } },
+        photoDataUrl && (React.createElement("div", { style: {
+                width: 84, height: 84, borderRadius: 20, overflow: 'hidden', marginBottom: 20,
+                border: `1px solid ${COLORS.border}`, boxShadow: '0 8px 20px rgba(16,24,43,0.1)',
+            } },
+            React.createElement("img", { src: photoDataUrl, alt: "", style: { width: '100%', height: '100%', objectFit: 'cover' } }))),
+        React.createElement("div", { className: "spin", style: {
+                width: 40, height: 40, borderRadius: 999, border: `3px solid ${COLORS.border}`,
+                borderTopColor: COLORS.ink, marginBottom: 20,
+            } }),
+        React.createElement("div", { style: { fontWeight: 700, fontSize: 16, color: COLORS.ink, minHeight: 24 } }, progress ? `Analizando ${progress.current} de ${progress.total}` : LOADING_MESSAGES[msgIndex]),
+        React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, marginTop: 8 } }, LOADING_MESSAGES[msgIndex])));
+}
+function ErrorScreen({ message, onRetry, onBack }) {
+    return (React.createElement("div", { className: "screenFade", style: {
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            minHeight: '100%', padding: 32, textAlign: 'center',
+        } },
+        React.createElement("div", { style: {
+                width: 56, height: 56, borderRadius: 999, background: COLORS.dangerSoft,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18,
+            } },
+            React.createElement(AlertCircle, { size: 26, color: COLORS.danger })),
+        React.createElement("div", { style: { fontWeight: 700, fontSize: 16, color: COLORS.ink, marginBottom: 6 } }, "No pudimos completar la tasaci\u00F3n"),
+        React.createElement("div", { style: { fontSize: 13.5, color: COLORS.muted, marginBottom: 24 } }, message),
+        React.createElement("div", { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 10 } },
+            React.createElement(PrimaryButton, { onClick: onRetry }, "Reintentar"),
+            React.createElement("button", { onClick: onBack, style: {
+                    background: 'none', border: 'none', color: COLORS.inkSoft, fontFamily: FONT,
+                    fontWeight: 600, fontSize: 14, cursor: 'pointer', padding: 10,
+                } }, "Elegir otra foto"))));
+}
+const labelStyle = {
+    display: 'block', fontSize: 13, fontWeight: 700, color: COLORS.inkSoft,
+    marginTop: 18, marginBottom: 7, letterSpacing: '0.01em',
+};
+const inputStyle = {
+    width: '100%', padding: '14px 15px', borderRadius: 14, border: `1px solid ${COLORS.border}`,
+    fontSize: 15, lineHeight: 1.5, color: COLORS.ink, fontFamily: FONT, background: '#fff', boxSizing: 'border-box',
+};
+function PlatformCard({ name, accent, textColor, copied, onCopy, href }) {
+    return (React.createElement("div", { style: {
+            borderRadius: 18, border: `1px solid ${COLORS.border}`, background: COLORS.card,
+            padding: 16, marginBottom: 12,
+        } },
+        React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 } },
+            React.createElement("div", { style: { width: 10, height: 10, borderRadius: 999, background: accent } }),
+            React.createElement("div", { style: { fontWeight: 700, fontSize: 14.5, color: COLORS.ink } }, name)),
+        React.createElement("div", { style: { display: 'flex', gap: 10 } },
+            React.createElement("button", { onClick: onCopy, style: {
+                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    padding: '11px 12px', borderRadius: 12, border: `1px solid ${COLORS.border}`,
+                    background: '#fff', fontFamily: FONT, fontWeight: 700, fontSize: 13, cursor: 'pointer', color: COLORS.ink,
+                } },
+                copied ? React.createElement(Check, { size: 15 }) : React.createElement(Copy, { size: 15 }),
+                " ",
+                copied ? 'Copiado' : 'Copiar anuncio'),
+            React.createElement("a", { href: href, target: "_blank", rel: "noopener noreferrer", style: {
+                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    padding: '11px 12px', borderRadius: 12, border: 'none', textDecoration: 'none',
+                    background: accent, fontFamily: FONT, fontWeight: 700, fontSize: 13, color: textColor || '#fff',
+                } },
+                React.createElement(ExternalLink, { size: 15 }),
+                " Abrir"))));
+}
+function ResultScreen({ analysis, listing, setListing, photoDataUrl, onBack, bottomLabel, onBottomClick, isPremium, onUpgrade }) {
+    const [copied, setCopied] = useState(null);
+    const currency = analysis.currency || 'USD';
+    const fullText = `${listing.title} — ${currency} ${Math.round(listing.price) || 0}\n\n${listing.description}\n\nEstado: ${analysis.condition || ''}`;
+    const copy = async (key) => {
+        try {
+            await navigator.clipboard.writeText(fullText);
+            setCopied(key);
+            setTimeout(() => setCopied(null), 2200);
+        }
+        catch (e) {
+            setCopied('failed');
+            setTimeout(() => setCopied(null), 2200);
+        }
+    };
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "Tu anuncio", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '4px 24px 16px', overflowY: 'auto' } },
+            photoDataUrl && (React.createElement("div", { style: { borderRadius: 20, overflow: 'hidden', border: `1px solid ${COLORS.border}`, marginBottom: 16 } },
+                React.createElement("img", { src: photoDataUrl, alt: "Foto del art\u00EDculo", style: { width: '100%', display: 'block', maxHeight: 240, objectFit: 'cover' } }))),
+            React.createElement("div", { style: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' } },
+                React.createElement("span", { style: {
+                        padding: '6px 12px', borderRadius: 999, background: 'rgba(16,24,43,0.06)',
+                        fontSize: 12.5, fontWeight: 700, color: COLORS.ink,
+                    } }, analysis.category || 'Artículo'),
+                React.createElement("span", { style: {
+                        padding: '6px 12px', borderRadius: 999, background: COLORS.greenSoft,
+                        fontSize: 12.5, fontWeight: 700, color: COLORS.green,
+                    } }, analysis.condition || 'Estado evaluado')),
+            React.createElement("div", { style: {
+                    borderRadius: 20, background: COLORS.card, border: `1px solid ${COLORS.border}`,
+                    padding: 20, marginBottom: 20,
+                } },
+                React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, fontWeight: 700 } }, "Valor de mercado estimado"),
+                React.createElement("div", { style: { fontSize: 34, fontWeight: 800, color: COLORS.green, letterSpacing: '-0.02em', marginTop: 6 } },
+                    currency,
+                    " ",
+                    Math.round(listing.price) || 0),
+                React.createElement("div", { style: { fontSize: 13, color: COLORS.inkSoft, marginTop: 4 } },
+                    "Rango de mercado: ",
+                    currency,
+                    " ",
+                    Math.round(analysis.estimated_value_low || 0),
+                    " \u2013 ",
+                    Math.round(analysis.estimated_value_high || 0)),
+                analysis.market_notes && (React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginTop: 10, lineHeight: 1.5 } }, analysis.market_notes))),
+            React.createElement("label", { style: labelStyle }, "T\u00EDtulo"),
+            React.createElement("input", { value: listing.title, onChange: (e) => setListing(Object.assign(Object.assign({}, listing), { title: e.target.value })), style: inputStyle }),
+            React.createElement("label", { style: labelStyle },
+                "Precio (",
+                currency,
+                ")"),
+            React.createElement("input", { type: "number", value: listing.price, onChange: (e) => setListing(Object.assign(Object.assign({}, listing), { price: e.target.value })), style: inputStyle }),
+            React.createElement("label", { style: labelStyle }, "Descripci\u00F3n"),
+            React.createElement("textarea", { value: listing.description, onChange: (e) => setListing(Object.assign(Object.assign({}, listing), { description: e.target.value })), rows: 4, style: Object.assign(Object.assign({}, inputStyle), { resize: 'vertical' }) }),
+            React.createElement("div", { style: { marginTop: 22, marginBottom: 14, fontSize: 12.5, fontWeight: 700, color: COLORS.inkSoft } }, "Publicar"),
+            React.createElement(PlatformCard, { name: "Facebook Marketplace", accent: "#3B5BA9", copied: copied === 'fb', onCopy: () => copy('fb'), href: "https://www.facebook.com/marketplace/create/item" }),
+            React.createElement(PlatformCard, { name: "OfferUp", accent: COLORS.green, copied: copied === 'offerup', onCopy: () => copy('offerup'), href: "https://offerup.com" }),
+            React.createElement("a", { href: `https://wa.me/?text=${encodeURIComponent(fullText)}`, target: "_blank", rel: "noopener noreferrer", style: {
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%',
+                    padding: '13px 12px', borderRadius: 14, border: 'none', textDecoration: 'none',
+                    background: '#25D366', fontFamily: FONT, fontWeight: 700, fontSize: 13.5, color: '#fff', marginBottom: 12,
+                } },
+                React.createElement(MessageCircle, { size: 16 }),
+                " Compartir por WhatsApp"),
+            React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted, marginTop: -6, marginBottom: 14, lineHeight: 1.5 } }, "Se abre WhatsApp con el mensaje ya escrito \u2014 adjunta ah\u00ED la foto que descargues abajo."),
+            isPremium ? (React.createElement(React.Fragment, null,
+                React.createElement(PlatformCard, { name: "eBay", accent: "#3665A6", copied: copied === 'ebay', onCopy: () => copy('ebay'), href: "https://www.ebay.com/sl/sell" }),
+                React.createElement(PlatformCard, { name: "Mercado Libre", accent: "#D98400", copied: copied === 'ml', onCopy: () => copy('ml'), href: "https://www.mercadolibre.com" }),
+                React.createElement(PlatformCard, { name: "Vinted", accent: "#178A54", copied: copied === 'vinted', onCopy: () => copy('vinted'), href: "https://www.vinted.com" }))) : (React.createElement(LockedTeaser, { label: "+ eBay, Mercado Libre y Vinted con Premium", onClick: () => onUpgrade('Publicar en más plataformas es una función Premium.') })),
+            copied === 'failed' && (React.createElement("div", { style: { fontSize: 12.5, color: COLORS.danger, marginTop: 4, marginBottom: 8 } }, "No se pudo copiar autom\u00E1ticamente. Mant\u00E9n presionado el texto de abajo para copiarlo.")),
+            photoDataUrl && (React.createElement("a", { href: photoDataUrl, download: "revalua-foto.jpg", style: {
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    padding: '11px 12px', borderRadius: 12, border: `1px solid ${COLORS.border}`,
+                    background: '#fff', fontFamily: FONT, fontWeight: 700, fontSize: 13, color: COLORS.ink,
+                    textDecoration: 'none', marginTop: 2, marginBottom: 14,
+                } },
+                React.createElement(Download, { size: 15 }),
+                " Guardar foto para adjuntarla")),
+            React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted, lineHeight: 1.5 } }, "Copiamos el anuncio para que lo pegues t\u00FA mismo \u2014 ni Facebook ni OfferUp permiten publicar de forma autom\u00E1tica ni guardar tu contrase\u00F1a desde apps externas.")),
+        React.createElement("div", { style: { padding: 24 } },
+            React.createElement(PrimaryButton, { onClick: onBottomClick, style: { background: 'transparent', color: COLORS.inkSoft, border: `1px solid ${COLORS.border}` } }, bottomLabel))));
+}
+function BatchAnalyzingScreen({ progress }) {
+    return React.createElement(AnalyzingScreen, { photoDataUrl: null, progress: progress });
+}
+function BatchResultsScreen({ items, onSelect, onFinish, onDiscard }) {
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: `${items.length} artículos`, onBack: onDiscard }),
+        React.createElement("div", { style: { flex: 1, padding: '4px 24px 12px', overflowY: 'auto' } }, items.map((item, i) => (React.createElement("div", { key: i, style: {
+                display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
+                borderBottom: `1px solid ${COLORS.border}`, cursor: item.analysis ? 'pointer' : 'default',
+            }, onClick: () => item.analysis && onSelect(i) },
+            item.photoDataUrl ? (React.createElement("img", { src: item.photoDataUrl, alt: "", style: { width: 46, height: 46, borderRadius: 12, objectFit: 'cover', flexShrink: 0 } })) : (React.createElement("div", { style: { width: 46, height: 46, borderRadius: 12, background: COLORS.dangerSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } },
+                React.createElement(AlertCircle, { size: 18, color: COLORS.danger }))),
+            React.createElement("div", { style: { flex: 1, minWidth: 0 } }, item.analysis ? (React.createElement(React.Fragment, null,
+                React.createElement("div", { style: { fontWeight: 700, fontSize: 13.5, color: COLORS.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, item.listing.title),
+                React.createElement("div", { style: { fontSize: 12, color: COLORS.green, fontWeight: 700, marginTop: 2 } },
+                    item.analysis.currency || 'USD',
+                    " ",
+                    Math.round(item.listing.price) || 0))) : (React.createElement("div", { style: { fontSize: 12.5, color: COLORS.danger } }, item.error || 'No se pudo analizar esta foto.'))))))),
+        React.createElement("div", { style: { padding: 24 } },
+            React.createElement(PrimaryButton, { onClick: onFinish }, "Guardar todos y terminar"))));
+}
+function BuyResultsScreen({ analysis, photoDataUrl, onBack, onHome }) {
+    const results = analysis.results || [];
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "D\u00F3nde comprarla", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '4px 24px 16px', overflowY: 'auto' } },
+            React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 } },
+                photoDataUrl && (React.createElement("img", { src: photoDataUrl, alt: "", style: { width: 52, height: 52, borderRadius: 14, objectFit: 'cover', flexShrink: 0, border: `1px solid ${COLORS.border}` } })),
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontWeight: 800, fontSize: 16, color: COLORS.ink } }, analysis.item_name || 'Artículo identificado'),
+                    analysis.description && (React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginTop: 2 } }, analysis.description)))),
+            React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: COLORS.inkSoft, marginBottom: 12 } }, results.length > 0 ? `Encontramos ${results.length} anuncio${results.length > 1 ? 's' : ''}:` : 'No encontramos anuncios disponibles ahora mismo.'),
+            results.map((r, i) => (React.createElement("div", { key: i, style: {
+                    borderRadius: 18, border: `1px solid ${COLORS.border}`, background: COLORS.card,
+                    padding: 16, marginBottom: 12,
+                } },
+                React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: COLORS.ink } }, r.title || 'Anuncio encontrado'),
+                React.createElement("div", { style: { fontSize: 13, color: COLORS.green, fontWeight: 700, marginTop: 4 } },
+                    r.price != null ? `${r.currency || ''} ${Math.round(r.price)}` : 'Precio no indicado',
+                    " ",
+                    r.source ? `· ${r.source}` : ''),
+                React.createElement("a", { href: r.url, target: "_blank", rel: "noopener noreferrer", style: {
+                        marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        padding: '10px 12px', borderRadius: 12, border: 'none', textDecoration: 'none',
+                        background: COLORS.ink, fontFamily: FONT, fontWeight: 700, fontSize: 13, color: '#fff',
+                    } },
+                    React.createElement(ExternalLink, { size: 14 }),
+                    " Ver anuncio y comprar")))),
+            React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted, marginTop: 12, lineHeight: 1.5 } }, "Estos resultados vienen de una b\u00FAsqueda en vivo \u2014 confirma siempre precio y disponibilidad en el sitio antes de comprar.")),
+        React.createElement("div", { style: { padding: 24 } },
+            React.createElement(PrimaryButton, { onClick: onHome, style: { background: 'transparent', color: COLORS.inkSoft, border: `1px solid ${COLORS.border}` } }, "Volver al inicio"))));
+}
+function HistoryScreen({ items, onBack, onDelete, onToggleSold, isPremium, onUpgrade }) {
+    const [suggestions, setSuggestions] = useState({});
+    const isStale = (item) => item.date && Date.now() - item.date > 7 * 24 * 60 * 60 * 1000;
+    const suggestDrop = async (item) => {
+        setSuggestions((s) => (Object.assign(Object.assign({}, s), { [item.storageKey]: { loading: true } })));
+        try {
+            const text = await suggestPriceDrop(item);
+            setSuggestions((s) => (Object.assign(Object.assign({}, s), { [item.storageKey]: { loading: false, text } })));
+        }
+        catch (e) {
+            setSuggestions((s) => (Object.assign(Object.assign({}, s), { [item.storageKey]: { loading: false, error: 'No se pudo generar una sugerencia.' } })));
+        }
+    };
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "Historial", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '4px 24px 24px' } }, items.length === 0 ? (React.createElement("div", { style: {
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                padding: '60px 20px', textAlign: 'center', color: COLORS.muted,
+            } },
+            React.createElement(ImageIcon, { size: 32, style: { marginBottom: 12, opacity: 0.5 } }),
+            React.createElement("div", { style: { fontSize: 14, fontWeight: 600 } }, "A\u00FAn no has tasado ning\u00FAn art\u00EDculo."))) : (items.map((item) => {
+            const sug = suggestions[item.storageKey];
+            const stale = isStale(item);
+            return (React.createElement("div", { key: item.storageKey, style: { padding: '14px 4px', borderBottom: `1px solid ${COLORS.border}` } },
+                React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+                    React.createElement("div", null,
+                        React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: COLORS.ink } }, item.title),
+                        React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginTop: 2 } },
+                            item.currency || 'USD',
+                            " ",
+                            Math.round(item.price || 0),
+                            " \u00B7 ",
+                            item.category || '')),
+                    React.createElement("button", { onClick: () => onDelete(item.storageKey), style: iconButtonStyle },
+                        React.createElement(Trash2, { size: 16, color: COLORS.danger }))),
+                React.createElement("button", { onClick: () => onToggleSold(item.storageKey, !item.sold), style: {
+                        marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '6px 12px', borderRadius: 999, border: `1px solid ${item.sold ? COLORS.green : COLORS.border}`,
+                        background: item.sold ? COLORS.greenSoft : '#fff', color: item.sold ? COLORS.green : COLORS.muted,
+                        fontFamily: FONT, fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                    } },
+                    React.createElement(Check, { size: 13 }),
+                    " ",
+                    item.sold ? 'Vendido' : 'Marcar como vendido'),
+                stale && (React.createElement("div", { style: { marginTop: 10 } }, isPremium ? (sug && sug.text ? (React.createElement("div", { style: { fontSize: 12.5, color: COLORS.green, background: COLORS.greenSoft, padding: '8px 10px', borderRadius: 10 } }, sug.text)) : sug && sug.error ? (React.createElement("div", { style: { fontSize: 12.5, color: COLORS.danger } }, sug.error)) : (React.createElement("button", { onClick: () => suggestDrop(item), disabled: sug && sug.loading, style: {
+                        display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none',
+                        color: COLORS.inkSoft, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, cursor: 'pointer', padding: 0,
+                    } },
+                    React.createElement(TrendingDown, { size: 14 }),
+                    " ",
+                    sug && sug.loading ? 'Consultando…' : 'Sugerir bajar precio'))) : (React.createElement("button", { onClick: () => onUpgrade('Las sugerencias de precio son una función Premium.'), style: {
+                        display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none',
+                        color: COLORS.muted, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, cursor: 'pointer', padding: 0,
+                    } },
+                    React.createElement(Lock, { size: 13 }),
+                    " Sugerir bajar precio (Premium)"))))));
+        })))));
+}
+function EarningsScreen({ history, onBack }) {
+    const soldItems = history.filter((h) => h.sold);
+    const totalItems = history.length;
+    const totalSoldValue = soldItems.reduce((sum, h) => sum + (Number(h.price) || 0), 0);
+    const currency = (history[0] && history[0].currency) || 'USD';
+    const now = new Date();
+    const monthSums = [];
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const sum = soldItems
+            .filter((h) => h.date && new Date(h.date).getFullYear() === d.getFullYear() && new Date(h.date).getMonth() === d.getMonth())
+            .reduce((s, h) => s + (Number(h.price) || 0), 0);
+        monthSums.push({ label: MONTH_LABELS[d.getMonth()], value: sum });
+    }
+    const maxVal = Math.max(1, ...monthSums.map((m) => m.value));
+    const thisMonthSum = monthSums[monthSums.length - 1].value;
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "Reporte", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '4px 24px 24px' } },
+            React.createElement("div", { style: { borderRadius: 20, background: COLORS.card, border: `1px solid ${COLORS.border}`, padding: 20, marginBottom: 24 } },
+                React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, fontWeight: 700 } }, "Ganancias confirmadas"),
+                React.createElement("div", { style: { fontSize: 32, fontWeight: 800, color: COLORS.green, marginTop: 6, letterSpacing: '-0.02em' } },
+                    currency,
+                    " ",
+                    Math.round(totalSoldValue)),
+                React.createElement("div", { style: { fontSize: 13, color: COLORS.inkSoft, marginTop: 4 } },
+                    soldItems.length,
+                    " de ",
+                    totalItems,
+                    " art\u00EDculos tasados se marcaron como vendidos \u00B7 este mes: ",
+                    currency,
+                    " ",
+                    Math.round(thisMonthSum))),
+            React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: COLORS.inkSoft, marginBottom: 12 } }, "\u00DAltimos 6 meses (vendido)"),
+            React.createElement("div", { style: { display: 'flex', alignItems: 'flex-end', height: 140, gap: 8 } }, monthSums.map((m, i) => (React.createElement("div", { key: i, style: { flex: 1, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 6 } },
+                React.createElement("div", { style: { width: '70%', height: `${Math.max(4, (m.value / maxVal) * 100)}%`, background: COLORS.green, borderRadius: 6 } }),
+                React.createElement("div", { style: { fontSize: 10, color: COLORS.muted, fontWeight: 600 } }, m.label))))))));
+}
+function NegotiateScreen({ onBack }) {
+    const [itemContext, setItemContext] = useState('');
+    const [buyerMsg, setBuyerMsg] = useState('');
+    const [reply, setReply] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [err, setErr] = useState(null);
+    const [copied, setCopied] = useState(false);
+    const handleSuggest = async () => {
+        if (!buyerMsg.trim())
+            return;
+        setLoading(true);
+        setErr(null);
+        setReply(null);
+        try {
+            const text = await suggestNegotiationReply(itemContext, buyerMsg);
+            setReply(text);
+        }
+        catch (e) {
+            setErr(e.message || 'No se pudo generar una respuesta.');
+        }
+        finally {
+            setLoading(false);
+        }
+    };
+    const copyReply = async () => {
+        try {
+            await navigator.clipboard.writeText(reply || '');
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
+        catch (e) {
+            // ignore
+        }
+    };
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "Asistente de negociaci\u00F3n", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '4px 24px 24px', overflowY: 'auto' } },
+            React.createElement("label", { style: labelStyle }, "Art\u00EDculo y precio (opcional)"),
+            React.createElement("input", { value: itemContext, onChange: (e) => setItemContext(e.target.value), placeholder: "Ej. C\u00E1mara Pentax K1000, $80", style: inputStyle }),
+            React.createElement("label", { style: labelStyle }, "Mensaje del comprador"),
+            React.createElement("textarea", { value: buyerMsg, onChange: (e) => setBuyerMsg(e.target.value), rows: 4, placeholder: 'Ej. "\u00BFAceptas 50?"', style: Object.assign(Object.assign({}, inputStyle), { resize: 'vertical' }) }),
+            React.createElement("div", { style: { marginTop: 16 } },
+                React.createElement(PrimaryButton, { onClick: handleSuggest, disabled: loading || !buyerMsg.trim() },
+                    React.createElement(Sparkles, { size: 16 }),
+                    " ",
+                    loading ? 'Pensando…' : 'Sugerir respuesta')),
+            err && (React.createElement("div", { style: { marginTop: 16, fontSize: 13, color: COLORS.danger } }, err)),
+            reply && (React.createElement("div", { style: { marginTop: 20, borderRadius: 16, border: `1px solid ${COLORS.border}`, background: COLORS.card, padding: 16 } },
+                React.createElement("div", { style: { fontSize: 13.5, color: COLORS.ink, lineHeight: 1.55 } }, reply),
+                React.createElement("button", { onClick: copyReply, style: {
+                        marginTop: 12, display: 'flex', alignItems: 'center', gap: 6, background: 'none',
+                        border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '8px 12px',
+                        fontFamily: FONT, fontWeight: 700, fontSize: 12.5, color: COLORS.ink, cursor: 'pointer',
+                    } },
+                    copied ? React.createElement(Check, { size: 14 }) : React.createElement(Copy, { size: 14 }),
+                    " ",
+                    copied ? 'Copiado' : 'Copiar respuesta'))))));
+}
+function UpgradeScreen({ reason, isPremium, onActivate, onDeactivate, onBack }) {
+    const features = [
+        'Tasaciones ilimitadas cada mes',
+        'Publica también en eBay, Mercado Libre y Vinted',
+        'Reporte mensual de ganancias',
+        'Asistente de negociación con compradores',
+        'Sugerencias para bajar precio en artículos sin vender',
+        'Tasa hasta 10 artículos a la vez',
+    ];
+    return (React.createElement("div", { className: "screenFade", style: { display: 'flex', flexDirection: 'column', minHeight: '100%' } },
+        React.createElement(TopBar, { title: "Reval\u00FAa Premium", onBack: onBack }),
+        React.createElement("div", { style: { flex: 1, padding: '4px 24px 12px' } },
+            reason && (React.createElement("div", { style: { padding: '12px 14px', borderRadius: 14, background: 'rgba(16,24,43,0.05)', fontSize: 12.5, color: COLORS.inkSoft, marginBottom: 18 } }, reason)),
+            React.createElement("div", { style: { display: 'flex', justifyContent: 'center', marginBottom: 18 } },
+                React.createElement("div", { style: { width: 64, height: 64, borderRadius: 999, background: COLORS.greenSoft, display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                    React.createElement(Crown, { size: 30, color: COLORS.green }))),
+            React.createElement("div", { style: { display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 } }, features.map((f, i) => (React.createElement("div", { key: i, style: { display: 'flex', alignItems: 'flex-start', gap: 10 } },
+                React.createElement(Check, { size: 16, color: COLORS.green, style: { flexShrink: 0, marginTop: 2 } }),
+                React.createElement("span", { style: { fontSize: 14, color: COLORS.ink, fontWeight: 500 } }, f))))),
+            React.createElement("div", { style: { textAlign: 'center', fontSize: 26, fontWeight: 800, color: COLORS.ink } },
+                "$4.99",
+                React.createElement("span", { style: { fontSize: 14, fontWeight: 600, color: COLORS.muted } }, "/mes")),
+            React.createElement("div", { style: { textAlign: 'center', fontSize: 11.5, color: COLORS.muted, marginTop: 6 } }, "Modo demostraci\u00F3n \u2014 activar aqu\u00ED no genera ning\u00FAn cobro real.")),
+        React.createElement("div", { style: { padding: 24 } }, isPremium ? (React.createElement(React.Fragment, null,
+            React.createElement("div", { style: {
+                    textAlign: 'center', padding: '13px', borderRadius: 999, background: COLORS.greenSoft,
+                    color: COLORS.green, fontWeight: 700, fontSize: 14, marginBottom: 10,
+                } }, "Premium activado \u2713"),
+            React.createElement("button", { onClick: onDeactivate, style: {
+                    width: '100%', background: 'none', border: 'none', color: COLORS.muted,
+                    fontFamily: FONT, fontWeight: 600, fontSize: 13, cursor: 'pointer', padding: 8,
+                } }, "Desactivar (demo)"))) : (React.createElement(PrimaryButton, { onClick: onActivate }, "Activar Premium (demo)")))));
+}
+function RevaluaApp() {
+    const [screen, setScreen] = useState('home');
+    const [photoDataUrl, setPhotoDataUrl] = useState(null);
+    const [analysis, setAnalysis] = useState(null);
+    const [listing, setListing] = useState({ title: '', price: 0, description: '' });
+    const [error, setError] = useState(null);
+    const [history, setHistory] = useState([]);
+    const [isPremium, setIsPremium] = useState(false);
+    const [scanCount, setScanCount] = useState(0);
+    const [upgradeReason, setUpgradeReason] = useState('');
+    const [batchItems, setBatchItems] = useState([]);
+    const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+    const [activeBatchIndex, setActiveBatchIndex] = useState(null);
+    const [batchError, setBatchError] = useState(null);
+    const [buyPhotoDataUrl, setBuyPhotoDataUrl] = useState(null);
+    const [buyAnalysis, setBuyAnalysis] = useState(null);
+    const [buyError, setBuyError] = useState(null);
+    const refreshHistory = async () => {
+        const items = await loadHistory();
+        setHistory(items);
+    };
+    useEffect(() => {
+        (async () => {
+            const [items, premium, count] = await Promise.all([loadHistory(), getPremiumStatus(), getScanCount()]);
+            setHistory(items);
+            setIsPremium(premium);
+            setScanCount(count);
+        })();
+    }, []);
+    const goUpgrade = (reason) => {
+        setUpgradeReason(reason || '');
+        setScreen('upgrade');
+    };
+    const activatePremium = async () => {
+        await setPremiumStatus(true);
+        setIsPremium(true);
+        setScreen('home');
+    };
+    const deactivatePremium = async () => {
+        await setPremiumStatus(false);
+        setIsPremium(false);
+    };
+    const runAnalysisWith = async (dataUrl) => {
+        setError(null);
+        setScreen('analyzing');
+        try {
+            const result = await analyzeItem(dataUrl);
+            const nextListing = {
+                title: result.title || result.item_name || 'Artículo en venta',
+                price: result.suggested_price || result.estimated_value_low || 0,
+                description: result.description || '',
+            };
+            setAnalysis(result);
+            setListing(nextListing);
+            incrementScanCount();
+            setScanCount((c) => c + 1);
+            saveToHistory({
+                title: nextListing.title,
+                price: Number(nextListing.price) || 0,
+                currency: result.currency,
+                category: result.category,
+                condition: result.condition,
+                date: Date.now(),
+                sold: false,
+            }).then(refreshHistory);
+            setScreen('results');
+        }
+        catch (e) {
+            setError(e.message || 'Ocurrió un error inesperado.');
+            setScreen('error');
+        }
+    };
+    const handlePhoto = async (file) => {
+        setError(null);
+        try {
+            const resized = await resizeImage(file);
+            setPhotoDataUrl(resized);
+            runAnalysisWith(resized);
+        }
+        catch (e) {
+            setError('No se pudo procesar la imagen. Intenta con otra foto.');
+        }
+    };
+    const goSingleCapture = () => {
+        if (!isPremium && scanCount >= FREE_SCAN_LIMIT) {
+            goUpgrade('Ya usaste tus 3 tasaciones gratis este mes.');
+            return;
+        }
+        setScreen('capture');
+    };
+    const goBatchCapture = () => {
+        if (!isPremium) {
+            goUpgrade('Tasar varios artículos a la vez es una función Premium.');
+            return;
+        }
+        setBatchError(null);
+        setScreen('batch-capture');
+    };
+    const goBuyCapture = () => {
+        if (!isPremium) {
+            goUpgrade('Buscar dónde comprar una pieza es una función Premium.');
+            return;
+        }
+        setBuyError(null);
+        setScreen('buy-capture');
+    };
+    const runBuySearchWith = async (dataUrl) => {
+        setBuyError(null);
+        setScreen('buy-analyzing');
+        try {
+            const result = await analyzeForPurchase(dataUrl);
+            setBuyAnalysis(result);
+            setScreen('buy-results');
+        }
+        catch (e) {
+            setBuyError(e.message || 'Ocurrió un error inesperado.');
+            setScreen('buy-error');
+        }
+    };
+    const handleBuyPhoto = async (file) => {
+        setBuyError(null);
+        try {
+            const resized = await resizeImage(file);
+            setBuyPhotoDataUrl(resized);
+            runBuySearchWith(resized);
+        }
+        catch (e) {
+            setBuyError('No se pudo procesar la imagen. Intenta con otra foto.');
+        }
+    };
+    const handleBatchPhotos = async (files) => {
+        const fileArray = Array.from(files).slice(0, 10);
+        setScreen('batch-analyzing');
+        const results = [];
+        for (let i = 0; i < fileArray.length; i++) {
+            setBatchProgress({ current: i + 1, total: fileArray.length });
+            try {
+                const resized = await resizeImage(fileArray[i]);
+                const result = await analyzeItem(resized);
+                const nextListing = {
+                    title: result.title || result.item_name || 'Artículo en venta',
+                    price: result.suggested_price || result.estimated_value_low || 0,
+                    description: result.description || '',
+                };
+                results.push({ photoDataUrl: resized, analysis: result, listing: nextListing });
+            }
+            catch (e) {
+                results.push({ photoDataUrl: null, analysis: null, listing: null, error: e.message || 'Error al analizar esta foto.' });
+            }
+        }
+        setBatchItems(results);
+        setScreen('batch-results');
+    };
+    const openBatchItem = (idx) => {
+        const item = batchItems[idx];
+        setAnalysis(item.analysis);
+        setListing(item.listing);
+        setPhotoDataUrl(item.photoDataUrl);
+        setActiveBatchIndex(idx);
+        setScreen('results');
+    };
+    const finishBatchDetail = () => {
+        setBatchItems((items) => items.map((it, idx) => (idx === activeBatchIndex ? Object.assign(Object.assign({}, it), { listing }) : it)));
+        setActiveBatchIndex(null);
+        setScreen('batch-results');
+    };
+    const finishBatch = async () => {
+        for (const item of batchItems) {
+            if (item.analysis) {
+                await saveToHistory({
+                    title: item.listing.title,
+                    price: Number(item.listing.price) || 0,
+                    currency: item.analysis.currency,
+                    category: item.analysis.category,
+                    condition: item.analysis.condition,
+                    date: Date.now(),
+                    sold: false,
+                });
+            }
+        }
+        await refreshHistory();
+        setBatchItems([]);
+        setScreen('home');
+    };
+    const handleDeleteHistory = async (key) => {
+        await deleteHistoryItem(key);
+        refreshHistory();
+    };
+    const handleToggleSold = async (key, sold) => {
+        await updateHistoryItem(key, { sold });
+        refreshHistory();
+    };
+    const resetFlow = () => {
+        setPhotoDataUrl(null);
+        setAnalysis(null);
+        setListing({ title: '', price: 0, description: '' });
+        setError(null);
+        setActiveBatchIndex(null);
+        setBuyPhotoDataUrl(null);
+        setBuyAnalysis(null);
+        setBuyError(null);
+        setScreen('home');
+    };
+    return (React.createElement("div", { style: {
+            width: '100%', minHeight: '100vh', display: 'flex', justifyContent: 'center',
+            background: `linear-gradient(160deg, ${COLORS.bgFrom} 0%, ${COLORS.bgTo} 100%)`,
+            fontFamily: FONT,
+        } },
+        React.createElement("style", null, `
+        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap');
+        * { box-sizing: border-box; }
+        input:focus, textarea:focus { outline: 2px solid ${COLORS.ink}; outline-offset: 1px; }
+        button { font-family: ${FONT}; }
+        @keyframes screenFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        .screenFade { animation: screenFadeIn 0.28s ease; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spin { animation: spin 0.9s linear infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .screenFade { animation: none; }
+          .spin { animation: spin 1.6s linear infinite; }
+        }
+      `),
+        React.createElement("div", { style: { width: '100%', maxWidth: 430, minHeight: '100vh', display: 'flex', flexDirection: 'column' } },
+            screen === 'home' && (React.createElement(HomeScreen, { onStart: goSingleCapture, onHistory: () => setScreen('history'), historyCount: history.length, onEarnings: () => (isPremium ? setScreen('earnings') : goUpgrade('El reporte de ganancias es una función Premium.')), onNegotiate: () => (isPremium ? setScreen('negotiate') : goUpgrade('El asistente de negociación es una función Premium.')), onUpgrade: () => goUpgrade(''), onBatch: goBatchCapture, onBuy: goBuyCapture, isPremium: isPremium, scanCount: scanCount })),
+            screen === 'capture' && (React.createElement(CaptureScreen, { onBack: resetFlow, onPhoto: handlePhoto, error: error })),
+            screen === 'batch-capture' && (React.createElement(BatchCaptureScreen, { onBack: resetFlow, onPhotos: handleBatchPhotos, error: batchError })),
+            screen === 'buy-capture' && (React.createElement(BuyCaptureScreen, { onBack: resetFlow, onPhoto: handleBuyPhoto, error: buyError })),
+            screen === 'analyzing' && React.createElement(AnalyzingScreen, { photoDataUrl: photoDataUrl }),
+            screen === 'buy-analyzing' && React.createElement(AnalyzingScreen, { photoDataUrl: buyPhotoDataUrl }),
+            screen === 'batch-analyzing' && React.createElement(BatchAnalyzingScreen, { progress: batchProgress }),
+            screen === 'error' && (React.createElement(ErrorScreen, { message: error, onRetry: () => runAnalysisWith(photoDataUrl), onBack: () => setScreen('capture') })),
+            screen === 'buy-error' && (React.createElement(ErrorScreen, { message: buyError, onRetry: () => runBuySearchWith(buyPhotoDataUrl), onBack: () => setScreen('buy-capture') })),
+            screen === 'results' && analysis && (React.createElement(ResultScreen, { analysis: analysis, listing: listing, setListing: setListing, photoDataUrl: photoDataUrl, onBack: activeBatchIndex !== null ? finishBatchDetail : () => setScreen('capture'), bottomLabel: activeBatchIndex !== null ? 'Volver a la lista' : 'Volver al inicio', onBottomClick: activeBatchIndex !== null ? finishBatchDetail : resetFlow, isPremium: isPremium, onUpgrade: goUpgrade })),
+            screen === 'batch-results' && (React.createElement(BatchResultsScreen, { items: batchItems, onSelect: openBatchItem, onFinish: finishBatch, onDiscard: () => { setBatchItems([]); setScreen('home'); } })),
+            screen === 'buy-results' && buyAnalysis && (React.createElement(BuyResultsScreen, { analysis: buyAnalysis, photoDataUrl: buyPhotoDataUrl, onBack: () => setScreen('buy-capture'), onHome: resetFlow })),
+            screen === 'history' && (React.createElement(HistoryScreen, { items: history, onBack: () => setScreen('home'), onDelete: handleDeleteHistory, onToggleSold: handleToggleSold, isPremium: isPremium, onUpgrade: goUpgrade })),
+            screen === 'earnings' && React.createElement(EarningsScreen, { history: history, onBack: () => setScreen('home') }),
+            screen === 'negotiate' && React.createElement(NegotiateScreen, { onBack: () => setScreen('home') }),
+            screen === 'upgrade' && (React.createElement(UpgradeScreen, { reason: upgradeReason, isPremium: isPremium, onActivate: activatePremium, onDeactivate: deactivatePremium, onBack: () => setScreen('home') })))));
+}
+try {
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(RevaluaApp, null));
+}
+catch (e) {
+    showDiag((e && e.message ? e.message : String(e)) + (e && e.stack ? '\n\n' + e.stack : ''));
+}
+
+</script>
+</body>
+</html>
