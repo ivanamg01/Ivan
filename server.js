@@ -13,10 +13,15 @@ const MODEL = 'gemini-3.6-flash';
 
 if (!GEMINI_API_KEY) {
   console.warn('⚠️  Falta GEMINI_API_KEY en las variables de entorno. El servidor no podrá llamar a la IA.');
+} else {
+  console.log(`✅ GEMINI_API_KEY detectada (longitud: ${GEMINI_API_KEY.length}, empieza con: ${GEMINI_API_KEY.slice(0, 4)}...)`);
 }
 
 // ---------- Utilidad central: llamar a Gemini ----------
 async function callGemini({ systemInstruction, parts, withSearch = true, maxOutputTokens = 1000 }) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('El servidor no tiene configurada GEMINI_API_KEY. Revisa las Variables en Railway.');
+  }
   const body = {
     contents: [{ role: 'user', parts }],
     generationConfig: { maxOutputTokens },
@@ -29,12 +34,11 @@ async function callGemini({ systemInstruction, parts, withSearch = true, maxOutp
   }
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY || '')}`,
     {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-goog-api-key': GEMINI_API_KEY,
       },
       body: JSON.stringify(body),
     }
